@@ -1,122 +1,148 @@
 import gradio as gr
-import openai
+import requests
 import json
-import os
 
-# Configure OpenAI to use the local LM Studio server
-openai.api_base = "http://localhost:1234/v1"
-openai.api_key = "not-needed"
+# LM Studio API endpoint
+API_URL = "http://localhost:1234/v1/chat/completions"
 
-# Global variable to store the system message
-system_message = "You are a helpful assistant."
-
-def predict(message, history):
-    global system_message
-    history_openai_format = [{"role": "system", "content": system_message}]
-    for human, assistant in history:
-        history_openai_format.append({"role": "user", "content": human})
-        history_openai_format.append({"role": "assistant", "content": assistant})
-    history_openai_format.append({"role": "user", "content": message})
-
-    response = openai.ChatCompletion.create(
-        model="local-model",  # This field is ignored by LM Studio but still required
-        messages=history_openai_format,
-        temperature=0.7,
-        max_tokens=1000,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0
-    )
-
-    return response.choices[0].message.content
-
-def generate_wpp_format(char_name, nickname, species, age, features, body, mind, personality, loves, hates, description):
-    wpp_format = f"""[character("{char_name}")
-{{
-Nickname("{nickname}")
-Species("{species}")
-Age("{age}")
-Features("{features}")
-Body("{body}")
-Mind("{mind}")
-Personality("{personality}")
-Loves("{loves}")
-Hates("{hates}")
-Description("{description}")
-}}]"""
-    return wpp_format
-
-def save_character(char_name, nickname, species, age, features, body, mind, personality, loves, hates, description):
-    global system_message
-    system_message = generate_wpp_format(char_name, nickname, species, age, features, body, mind, personality, loves, hates, description)
-    with open("character_data.json", "w") as f:
-        json.dump({
-            "char_name": char_name,
-            "nickname": nickname,
-            "species": species,
-            "age": age,
-            "features": features,
-            "body": body,
-            "mind": mind,
-            "personality": personality,
-            "loves": loves,
-            "hates": hates,
-            "description": description
-        }, f)
-    return "Character saved successfully!"
+def get_models():
+    response = requests.get("http://localhost:1234/v1/models")
+    if response.status_code == 200:
+        models = response.json()
+        return [model["id"] for model in models["data"]]
+    else:
+        return ["Error fetching models"]
 
 def load_character():
-    global system_message
-    if os.path.exists("character_data.json"):
-        with open("character_data.json", "r") as f:
-            data = json.load(f)
-        system_message = generate_wpp_format(**data)
-        return list(data.values())
-    return [""] * 11  # Return empty strings if no data is found
+    try:
+        with open("character.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"name": "", "age": "", "gender": "", "personality_traits": "", "description": ""}
 
-# Create the tabbed interface
+def save_character(name, age, gender, personality_traits, description):
+    character = {
+        "name": name,
+        "age": age,
+        "gender": gender,
+        "personality_traits": personality_traits,
+        "description": description
+    }
+    with open("character.json", "w") as f:
+        json.dump(character, f)
+    return "Character information saved successfully."
+
+def load_user():
+    try:
+        with open("user.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"name": "", "age": "", "interests": ""}
+
+def save_user(name, age, interests):
+    user = {"name": name, "age": age, "interests": interests}
+    with open("user.json", "w") as f:
+        json.dump(user, f)
+    return "User information saved successfully."
+
+def load_settings():
+    try:
+        with open("settings.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"temperature": 0.7, "max_tokens": 150}
+
+def save_settings(temperature, max_tokens):
+    settings = {"temperature": temperature, "max_tokens": max_tokens}
+    with open("settings.json", "w") as f:
+        json.dump(settings, f)
+    return "Settings saved successfully."
+
+def chat(message, history, model, temperature, max_tokens):
+    character = load_character()
+    user = load_user()
+
+    system_message = f"You are {character['name']}, a {character['age']}-year-old {character['gender']}. {character['description']} Your personality traits include: {character['personality_traits']}. You are responding to {user['name']}, a {user['age']}-year-old with interests in {user['interests']}."
+
+    messages = [{"role": "system", "content": system_message}]
+    for h in history:
+        messages.append({"role": "user", "content": h[0]})
+        messages.append({"role": "assistant", "content": h[1]})
+    
+    messages.append({"role": "user", "content": message})
+
+    response = requests.post(
+        API_URL,
+        headers={"Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+    )
+
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        return f"Error: {response.status_code} - {response.text}"
+
 with gr.Blocks() as demo:
-    with gr.Tabs():
-        with gr.TabItem("Chat"):
-            chatbot = gr.Chatbot(height=600)
-            msg = gr.Textbox()
-            clear = gr.Button("Clear")
+    with gr.Tab("Chat"):
+        chatbot = gr.Chatbot()
+        msg = gr.Textbox()
+        clear = gr.Button("Clear")
 
-            def user(user_message, history):
-                return "", history + [[user_message, None]]
+        model = gr.Dropdown(choices=get_models(), label="Model")
+        temperature = gr.Slider(minimum=0, maximum=1, value=0.7, step=0.1, label="Temperature")
+        max_tokens = gr.Slider(minimum=1, maximum=2048, value=150, step=1, label="Max Tokens")
 
-            def bot(history):
-                bot_message = predict(history[-1][0], history[:-1])
-                history[-1][1] = bot_message
-                return history
+    with gr.Tab("Character"):
+        name = gr.Textbox(label="Name")
+        age = gr.Textbox(label="Age")
+        gender = gr.Textbox(label="Gender")
+        personality_traits = gr.Textbox(label="Personality Traits")
+        description = gr.Textbox(label="Character Description")
+        save_char = gr.Button("Save Character")
+        char_status = gr.Textbox(label="Status", interactive=False)
 
-            msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
-                bot, chatbot, chatbot
-            )
-            clear.click(lambda: None, None, chatbot, queue=False)
+    with gr.Tab("User"):
+        user_name = gr.Textbox(label="Name")
+        user_age = gr.Textbox(label="Age")
+        user_interests = gr.Textbox(label="Interests")
+        save_user_btn = gr.Button("Save User")
+        user_status = gr.Textbox(label="Status", interactive=False)
 
-        with gr.TabItem("Settings"):
-            gr.Markdown("# Character Settings")
-            char_name = gr.Textbox(label="Character Name")
-            nickname = gr.Textbox(label="Nickname")
-            species = gr.Textbox(label="Species")
-            age = gr.Textbox(label="Age")
-            features = gr.Textbox(label="Features")
-            body = gr.Textbox(label="Body")
-            mind = gr.Textbox(label="Mind")
-            personality = gr.Textbox(label="Personality")
-            loves = gr.Textbox(label="Loves")
-            hates = gr.Textbox(label="Hates")
-            description = gr.Textbox(label="Description", lines=5)
-            
-            save_button = gr.Button("Save Character")
-            load_button = gr.Button("Load Character")
-            result = gr.Textbox(label="Result")
+    with gr.Tab("Settings"):
+        save_settings_btn = gr.Button("Save Settings")
+        settings_status = gr.Textbox(label="Status", interactive=False)
 
-            save_button.click(save_character, 
-                              inputs=[char_name, nickname, species, age, features, body, mind, personality, loves, hates, description], 
-                              outputs=result)
-            load_button.click(load_character, 
-                              outputs=[char_name, nickname, species, age, features, body, mind, personality, loves, hates, description])
+    def respond(message, chat_history, model, temperature, max_tokens):
+        bot_message = chat(message, chat_history, model, temperature, max_tokens)
+        chat_history.append((message, bot_message))
+        return "", chat_history
+
+    msg.submit(respond, [msg, chatbot, model, temperature, max_tokens], [msg, chatbot])
+    clear.click(lambda: None, None, chatbot, queue=False)
+
+    save_char.click(save_character, [name, age, gender, personality_traits, description], char_status)
+    save_user_btn.click(save_user, [user_name, user_age, user_interests], user_status)
+    save_settings_btn.click(save_settings, [temperature, max_tokens], settings_status)
+
+    def load_character_fields():
+        char = load_character()
+        return char["name"], char["age"], char["gender"], char["personality_traits"], char["description"]
+
+    def load_user_fields():
+        user = load_user()
+        return user["name"], user["age"], user["interests"]
+
+    def load_settings_fields():
+        settings = load_settings()
+        return settings["temperature"], settings["max_tokens"]
+
+    demo.load(load_character_fields, outputs=[name, age, gender, personality_traits, description])
+    demo.load(load_user_fields, outputs=[user_name, user_age, user_interests])
+    demo.load(load_settings_fields, outputs=[temperature, max_tokens])
 
 demo.launch()
