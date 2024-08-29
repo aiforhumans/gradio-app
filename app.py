@@ -1,99 +1,185 @@
 import gradio as gr
 import requests
 import json
+from functools import partial
+import asyncio
+import aiohttp
+import traceback
 
-# LM Studio API endpoint
+# Constants
 API_URL = "http://localhost:1234/v1/chat/completions"
+MODELS_URL = "http://localhost:1234/v1/models"
+CHARACTER_FILE = "character.json"
+USER_FILE = "user.json"
+SETTINGS_FILE = "settings.json"
+SCENARIO_FILE = "scenario.json"
 
-def get_models():
-    response = requests.get("http://localhost:1234/v1/models")
-    if response.status_code == 200:
-        models = response.json()
-        return [model["id"] for model in models["data"]]
-    else:
-        return ["Error fetching models"]
+# File operations
+def load_json(filename, default):
+    try:
+        with open(filename, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
 
+def save_json(filename, data):
+    with open(filename, "w") as f:
+        json.dump(data, f)
+    return f"Data saved successfully to {filename}."
+
+# Updated load functions
 def load_character():
-    try:
-        with open("character.json", "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {"name": "", "age": "", "gender": "", "personality_traits": "", "description": ""}
-
-def save_character(name, age, gender, personality_traits, description):
-    character = {
-        "name": name,
-        "age": age,
-        "gender": gender,
-        "personality_traits": personality_traits,
-        "description": description
-    }
-    with open("character.json", "w") as f:
-        json.dump(character, f)
-    return "Character information saved successfully."
-
-def load_user():
-    try:
-        with open("user.json", "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {"name": "", "age": "", "interests": ""}
-
-def save_user(name, age, interests):
-    user = {"name": name, "age": age, "interests": interests}
-    with open("user.json", "w") as f:
-        json.dump(user, f)
-    return "User information saved successfully."
-
-def load_settings():
-    try:
-        with open("settings.json", "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {"temperature": 0.7, "max_tokens": 150}
-
-def save_settings(temperature, max_tokens):
-    settings = {"temperature": temperature, "max_tokens": max_tokens}
-    with open("settings.json", "w") as f:
-        json.dump(settings, f)
-    return "Settings saved successfully."
-
-def chat(message, history, model, temperature, max_tokens):
-    character = load_character()
-    user = load_user()
-
-    system_message = f"You are {character['name']}, a {character['age']}-year-old {character['gender']}. {character['description']} Your personality traits include: {character['personality_traits']}. You are responding to {user['name']}, a {user['age']}-year-old with interests in {user['interests']}."
-
-    messages = [{"role": "system", "content": system_message}]
-    for h in history:
-        messages.append({"role": "user", "content": h[0]})
-        messages.append({"role": "assistant", "content": h[1]})
-    
-    messages.append({"role": "user", "content": message})
-
-    response = requests.post(
-        API_URL,
-        headers={"Content-Type": "application/json"},
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
+    data = load_json(CHARACTER_FILE, {
+        "name": "", "age": "", "gender": "", "occupation": "",
+        "background": "", "personality_traits": "", "likes": "",
+        "dislikes": "", "goals": "", "fears": "", "speaking_style": "",
+        "appearance": ""
+    })
+    return (
+        data["name"], data["age"], data["gender"], data["occupation"],
+        data["background"], data["personality_traits"], data["likes"],
+        data["dislikes"], data["goals"], data["fears"], data["speaking_style"],
+        data["appearance"]
     )
 
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    else:
-        return f"Error: {response.status_code} - {response.text}"
+def load_user():
+    data = load_json(USER_FILE, {
+        "name": "", "age": "", "gender": "", "occupation": "",
+        "interests": "", "background": "", "personality": "", "goals": ""
+    })
+    return (
+        data["name"], data["age"], data["gender"], data["occupation"],
+        data["interests"], data["background"], data["personality"], data["goals"]
+    )
 
+def load_settings():
+    data = load_json(SETTINGS_FILE, {"temperature": 0.7, "max_tokens": 150})
+    return data["temperature"], data["max_tokens"]
+
+def load_scenario():
+    data = load_json(SCENARIO_FILE, {"location": "", "time": "", "context": "", "objectives": ""})
+    return data["location"], data["time"], data["context"], data["objectives"]
+
+# Save functions remain the same
+save_character = partial(save_json, CHARACTER_FILE)
+save_user = partial(save_json, USER_FILE)
+save_settings = partial(save_json, SETTINGS_FILE)
+save_scenario = partial(save_json, SCENARIO_FILE)
+
+def generate_system_message():
+    character = load_json(CHARACTER_FILE, {})
+    user = load_json(USER_FILE, {})
+    scenario = load_json(SCENARIO_FILE, {})
+    
+    return f"""Roleplay Guidelines:
+
+Character: You are {character.get('name', '')}, a {character.get('age', '')}-year-old {character.get('gender', '')} who works as a {character.get('occupation', '')}.
+Background: {character.get('background', '')}
+Personality: {character.get('personality_traits', '')}
+Likes: {character.get('likes', '')}
+Dislikes: {character.get('dislikes', '')}
+Goals: {character.get('goals', '')}
+Fears: {character.get('fears', '')}
+Speaking Style: {character.get('speaking_style', '')}
+Appearance: {character.get('appearance', '')}
+
+User: You are interacting with {user.get('name', '')}, a {user.get('age', '')}-year-old {user.get('gender', '')} who works as a {user.get('occupation', '')}.
+User's Interests: {user.get('interests', '')}
+User's Background: {user.get('background', '')}
+User's Personality: {user.get('personality', '')}
+User's Goals: {user.get('goals', '')}
+
+Scenario:
+Location: {scenario.get('location', '')}
+Time: {scenario.get('time', '')}
+Context: {scenario.get('context', '')}
+Objectives: {scenario.get('objectives', '')}
+
+Guidelines:
+1. Always stay in character as {character.get('name', '')}.
+2. Use your defined speaking style and personality traits in all responses.
+3. Incorporate your background, likes, dislikes, goals, and fears into the conversation when relevant.
+4. React to the user's messages based on your character's personality and the given scenario.
+5. Use the scenario details to add depth and context to your responses.
+6. Adapt your responses based on the user's background, interests, and goals when appropriate.
+7. Never break character or acknowledge that you are an AI language model.
+8. If asked to do something that goes against your character's personality or the scenario, respond as your character would in that situation.
+
+Remember, you are roleplaying as a real person in a specific scenario. Make the interaction as realistic and immersive as possible."""
+
+# Updated async functions for API calls
+async def async_get_models():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(MODELS_URL) as response:
+            if response.status == 200:
+                models = await response.json()
+                model_list = [model["id"] for model in models["data"]]
+                # Add a default model if it's not in the list
+                default_model = "Lewdiculous/Lumimaid-v0.2-8B-GGUF-IQ-Imatrix/Lumimaid-v0.2-8B-Q4_K_S-imat.gguf"
+                if default_model not in model_list:
+                    model_list.append(default_model)
+                return model_list
+            return ["Error fetching models"]
+
+async def async_chat(message, history, model, temperature, max_tokens):
+    system_message = generate_system_message()
+    messages = [{"role": "system", "content": system_message}]
+    messages.extend([{"role": "user" if i % 2 == 0 else "assistant", "content": m} for h in history for i, m in enumerate(h)])
+    messages.append({"role": "user", "content": message})
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            API_URL,
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+        ) as response:
+            if response.status == 200:
+                result = await response.json()
+                return result["choices"][0]["message"]["content"]
+            return f"Error: {response.status} - {await response.text()}"
+
+# Error handling function
+def display_error(error):
+    return f"An error occurred: {str(error)}\n\nPlease try again or contact support if the issue persists."
+
+# Updated Gradio interface functions with error handling
+async def respond(message, chat_history, model, temperature, max_tokens):
+    try:
+        bot_message = await async_chat(message, chat_history, model, temperature, max_tokens)
+        chat_history.append((message, bot_message))
+        return "", chat_history
+    except Exception as e:
+        error_message = display_error(e)
+        chat_history.append((message, error_message))
+        return "", chat_history
+
+async def regenerate_last_response(chat_history, model, temperature, max_tokens):
+    try:
+        if chat_history:
+            last_user_message = chat_history[-1][0]
+            new_bot_message = await async_chat(last_user_message, chat_history[:-1], model, temperature, max_tokens)
+            chat_history[-1] = (last_user_message, new_bot_message)
+        return chat_history
+    except Exception as e:
+        error_message = display_error(e)
+        chat_history.append(("Error during regeneration", error_message))
+        return chat_history
+
+# Gradio interface
 with gr.Blocks() as demo:
     with gr.Tab("Chat"):
         chatbot = gr.Chatbot()
         msg = gr.Textbox()
-        clear = gr.Button("Clear")
+        with gr.Row():
+            clear = gr.Button("Clear")
+            regen = gr.Button("Regen")
 
-        model = gr.Dropdown(choices=get_models(), label="Model")
+        model = gr.Dropdown(choices=[], label="Model", value="Lewdiculous/Lumimaid-v0.2-8B-GGUF-IQ-Imatrix/Lumimaid-v0.2-8B-Q4_K_S-imat.gguf")
         temperature = gr.Slider(minimum=0, maximum=1, value=0.7, step=0.1, label="Temperature")
         max_tokens = gr.Slider(minimum=1, maximum=2048, value=150, step=1, label="Max Tokens")
 
@@ -101,48 +187,90 @@ with gr.Blocks() as demo:
         name = gr.Textbox(label="Name")
         age = gr.Textbox(label="Age")
         gender = gr.Textbox(label="Gender")
+        occupation = gr.Textbox(label="Occupation")
+        background = gr.Textbox(label="Background")
         personality_traits = gr.Textbox(label="Personality Traits")
-        description = gr.Textbox(label="Character Description")
+        likes = gr.Textbox(label="Likes")
+        dislikes = gr.Textbox(label="Dislikes")
+        goals = gr.Textbox(label="Goals")
+        fears = gr.Textbox(label="Fears")
+        speaking_style = gr.Textbox(label="Speaking Style")
+        appearance = gr.Textbox(label="Appearance")
         save_char = gr.Button("Save Character")
         char_status = gr.Textbox(label="Status", interactive=False)
 
     with gr.Tab("User"):
         user_name = gr.Textbox(label="Name")
         user_age = gr.Textbox(label="Age")
+        user_gender = gr.Textbox(label="Gender")
+        user_occupation = gr.Textbox(label="Occupation")
         user_interests = gr.Textbox(label="Interests")
+        user_background = gr.Textbox(label="Background")
+        user_personality = gr.Textbox(label="Personality")
+        user_goals = gr.Textbox(label="Goals")
         save_user_btn = gr.Button("Save User")
         user_status = gr.Textbox(label="Status", interactive=False)
+
+    with gr.Tab("Scenario"):
+        scenario_location = gr.Textbox(label="Location")
+        scenario_time = gr.Textbox(label="Time")
+        scenario_context = gr.Textbox(label="Context")
+        scenario_objectives = gr.Textbox(label="Objectives")
+        save_scenario_btn = gr.Button("Save Scenario")
+        scenario_status = gr.Textbox(label="Status", interactive=False)
 
     with gr.Tab("Settings"):
         save_settings_btn = gr.Button("Save Settings")
         settings_status = gr.Textbox(label="Status", interactive=False)
-
-    def respond(message, chat_history, model, temperature, max_tokens):
-        bot_message = chat(message, chat_history, model, temperature, max_tokens)
-        chat_history.append((message, bot_message))
-        return "", chat_history
+        system_message_display = gr.TextArea(label="System Message", interactive=False)
 
     msg.submit(respond, [msg, chatbot, model, temperature, max_tokens], [msg, chatbot])
     clear.click(lambda: None, None, chatbot, queue=False)
+    regen.click(regenerate_last_response, [chatbot, model, temperature, max_tokens], [chatbot])
 
-    save_char.click(save_character, [name, age, gender, personality_traits, description], char_status)
-    save_user_btn.click(save_user, [user_name, user_age, user_interests], user_status)
-    save_settings_btn.click(save_settings, [temperature, max_tokens], settings_status)
+    save_char.click(
+        lambda *args: save_character(dict(zip(
+            ["name", "age", "gender", "occupation", "background", "personality_traits", 
+             "likes", "dislikes", "goals", "fears", "speaking_style", "appearance"], 
+            args
+        ))),
+        [name, age, gender, occupation, background, personality_traits, 
+         likes, dislikes, goals, fears, speaking_style, appearance],
+        char_status
+    )
 
-    def load_character_fields():
-        char = load_character()
-        return char["name"], char["age"], char["gender"], char["personality_traits"], char["description"]
+    save_user_btn.click(
+        lambda *args: save_user(dict(zip(
+            ["name", "age", "gender", "occupation", "interests", "background", "personality", "goals"],
+            args
+        ))),
+        [user_name, user_age, user_gender, user_occupation, user_interests, user_background, user_personality, user_goals],
+        user_status
+    )
 
-    def load_user_fields():
-        user = load_user()
-        return user["name"], user["age"], user["interests"]
+    save_scenario_btn.click(
+        lambda *args: save_scenario(dict(zip(
+            ["location", "time", "context", "objectives"],
+            args
+        ))),
+        [scenario_location, scenario_time, scenario_context, scenario_objectives],
+        scenario_status
+    )
 
-    def load_settings_fields():
-        settings = load_settings()
-        return settings["temperature"], settings["max_tokens"]
+    save_settings_btn.click(
+        lambda t, m: save_settings({"temperature": t, "max_tokens": m}),
+        [temperature, max_tokens],
+        settings_status
+    )
 
-    demo.load(load_character_fields, outputs=[name, age, gender, personality_traits, description])
-    demo.load(load_user_fields, outputs=[user_name, user_age, user_interests])
-    demo.load(load_settings_fields, outputs=[temperature, max_tokens])
+    demo.load(load_character, outputs=[name, age, gender, occupation, background, personality_traits, 
+                                       likes, dislikes, goals, fears, speaking_style, appearance])
+    demo.load(load_user, outputs=[user_name, user_age, user_gender, user_occupation, user_interests, 
+                                  user_background, user_personality, user_goals])
+    demo.load(load_scenario, outputs=[scenario_location, scenario_time, scenario_context, scenario_objectives])
+    demo.load(load_settings, outputs=[temperature, max_tokens])
+    demo.load(generate_system_message, outputs=[system_message_display])
+    demo.load(async_get_models, outputs=[model])
 
-demo.launch()
+if __name__ == "__main__":
+    demo.launch()
