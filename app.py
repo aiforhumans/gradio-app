@@ -30,20 +30,49 @@ def predict(message, history):
 
     return response.choices[0].message.content
 
-def save_system_message(message):
-    global system_message
-    system_message = message
-    with open("system_message.json", "w") as f:
-        json.dump({"system_message": system_message}, f)
-    return "System message saved successfully!"
+def generate_wpp_format(char_name, nickname, species, age, features, body, mind, personality, loves, hates, description):
+    wpp_format = f"""[character("{char_name}")
+{{
+Nickname("{nickname}")
+Species("{species}")
+Age("{age}")
+Features("{features}")
+Body("{body}")
+Mind("{mind}")
+Personality("{personality}")
+Loves("{loves}")
+Hates("{hates}")
+Description("{description}")
+}}]"""
+    return wpp_format
 
-def load_system_message():
+def save_character(char_name, nickname, species, age, features, body, mind, personality, loves, hates, description):
     global system_message
-    if os.path.exists("system_message.json"):
-        with open("system_message.json", "r") as f:
+    system_message = generate_wpp_format(char_name, nickname, species, age, features, body, mind, personality, loves, hates, description)
+    with open("character_data.json", "w") as f:
+        json.dump({
+            "char_name": char_name,
+            "nickname": nickname,
+            "species": species,
+            "age": age,
+            "features": features,
+            "body": body,
+            "mind": mind,
+            "personality": personality,
+            "loves": loves,
+            "hates": hates,
+            "description": description
+        }, f)
+    return "Character saved successfully!"
+
+def load_character():
+    global system_message
+    if os.path.exists("character_data.json"):
+        with open("character_data.json", "r") as f:
             data = json.load(f)
-            system_message = data.get("system_message", "You are a helpful assistant.")
-    return system_message
+        system_message = generate_wpp_format(**data)
+        return list(data.values())
+    return [""] * 11  # Return empty strings if no data is found
 
 # Create the tabbed interface
 with gr.Blocks() as demo:
@@ -67,13 +96,27 @@ with gr.Blocks() as demo:
             clear.click(lambda: None, None, chatbot, queue=False)
 
         with gr.TabItem("Settings"):
-            gr.Markdown("# Settings")
-            system_message_input = gr.Textbox(label="System Message", lines=5, value=load_system_message())
-            save_button = gr.Button("Save System Message")
-            load_button = gr.Button("Load System Message")
+            gr.Markdown("# Character Settings")
+            char_name = gr.Textbox(label="Character Name")
+            nickname = gr.Textbox(label="Nickname")
+            species = gr.Textbox(label="Species")
+            age = gr.Textbox(label="Age")
+            features = gr.Textbox(label="Features")
+            body = gr.Textbox(label="Body")
+            mind = gr.Textbox(label="Mind")
+            personality = gr.Textbox(label="Personality")
+            loves = gr.Textbox(label="Loves")
+            hates = gr.Textbox(label="Hates")
+            description = gr.Textbox(label="Description", lines=5)
+            
+            save_button = gr.Button("Save Character")
+            load_button = gr.Button("Load Character")
             result = gr.Textbox(label="Result")
 
-            save_button.click(save_system_message, inputs=system_message_input, outputs=result)
-            load_button.click(load_system_message, outputs=system_message_input)
+            save_button.click(save_character, 
+                              inputs=[char_name, nickname, species, age, features, body, mind, personality, loves, hates, description], 
+                              outputs=result)
+            load_button.click(load_character, 
+                              outputs=[char_name, nickname, species, age, features, body, mind, personality, loves, hates, description])
 
 demo.launch()
